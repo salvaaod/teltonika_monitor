@@ -9,11 +9,14 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import signal
 import socket
 import struct
 import threading
 from dataclasses import dataclass
 from typing import Any
+
+SHUTDOWN_TIMEOUT_SECONDS = 2.0
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8090
@@ -55,6 +58,15 @@ class Reader:
 
     def i32(self) -> int:
         return struct.unpack(">i", self.take(4))[0]
+
+
+def close_tcp_connection(conn: socket.socket) -> None:
+    """Gracefully close a TCP channel by sending FIN before closing the socket."""
+    try:
+        conn.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+    conn.close()
 
 
 def recv_exact(conn: socket.socket, size: int) -> bytes:
@@ -189,25 +201,69 @@ def handle_client(conn: socket.socket, address: tuple[str, int]) -> None:
 
 
 def serve(host: str, port: int) -> None:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind((host, port))
-        server.listen()
-        print(f"listening for Teltonika TCP connections on {host}:{port}", flush=True)
-        while True:
-            conn, address = server.accept()
-            thread = threading.Thread(target=safe_handle_client, args=(conn, address), daemon=True)
-            thread.start()
+    stop_event = threading.Event()
+    clients: set[socket.socket] = set()
+    client_threads: list[threading.Thread] = []
+    clients_lock = threading.Lock()
+
+    def request_shutdown(signum: int, _frame: object) -> None:
+        signal_name = signal.Signals(signum).name
+        print(f"received {signal_name}; gracefully closing Teltonika TCP channels", flush=True)
+        stop_event.set()
+
+    previous_sigint = signal.signal(signal.SIGINT, request_shutdown)
+    previous_sigterm = signal.signal(signal.SIGTERM, request_shutdown)
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind((host, port))
+            server.listen()
+            server.settimeout(0.5)
+            print(f"listening for Teltonika TCP connections on {host}:{port}", flush=True)
+            while not stop_event.is_set():
+                try:
+                    conn, address = server.accept()
+                except socket.timeout:
+                    continue
+                with clients_lock:
+                    clients.add(conn)
+                thread = threading.Thread(
+                    target=safe_handle_client,
+                    args=(conn, address, clients, clients_lock),
+                )
+                thread.start()
+                client_threads.append(thread)
+    finally:
+        signal.signal(signal.SIGINT, previous_sigint)
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        stop_event.set()
+        with clients_lock:
+            for client in list(clients):
+                close_tcp_connection(client)
+        for thread in client_threads:
+            thread.join(timeout=SHUTDOWN_TIMEOUT_SECONDS)
+        print("server stopped", flush=True)
 
 
-def safe_handle_client(conn: socket.socket, address: tuple[str, int]) -> None:
+def safe_handle_client(
+    conn: socket.socket,
+    address: tuple[str, int],
+    clients: set[socket.socket],
+    clients_lock: threading.Lock,
+) -> None:
     try:
         handle_client(conn, address)
     except ConnectionError as exc:
         print(f"client disconnected {address[0]}:{address[1]}: {exc}", flush=True)
+    except OSError as exc:
+        print(f"socket closed {address[0]}:{address[1]}: {exc}", flush=True)
     except Exception as exc:  # keep server alive for the next tracker connection
         print(f"connection error {address[0]}:{address[1]}: {exc}", flush=True)
-        conn.close()
+    finally:
+        with clients_lock:
+            clients.discard(conn)
+        close_tcp_connection(conn)
 
 
 def main() -> None:
