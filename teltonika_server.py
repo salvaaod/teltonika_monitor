@@ -117,7 +117,8 @@ def parse_io_elements(reader: Reader, codec_id: int) -> dict[str, Any]:
     if len(values) != total_io:
         print(f"warning: IO count mismatch, declared={total_io}, decoded={len(values)}", flush=True)
 
-    return {"event_io_id": event_io_id, "total_io": total_io, "values": values}
+    sorted_values = {io_id: values[io_id] for io_id in sorted(values, key=int)}
+    return {"event_io_id": event_io_id, "total_io": total_io, "values": sorted_values}
 
 
 def format_local_timestamp(timestamp_ms: int) -> str:
@@ -202,7 +203,7 @@ def handle_client(conn: socket.socket, address: tuple[str, int]) -> None:
             record_count, decoded = parse_avl_packet(packet)
             decoded["imei"] = imei
             decoded["remote_address"] = f"{address[0]}:{address[1]}"
-            print(json.dumps(decoded, indent=2, sort_keys=True), flush=True)
+            print(json.dumps(decoded, indent=2), flush=True)
             conn.sendall(struct.pack(">I", record_count))
             print(f"acknowledged {record_count} record(s) for {imei}", flush=True)
 
