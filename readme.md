@@ -26,7 +26,7 @@ Point the tracker server settings to the Linux machine public IP or DNS name and
 
 ## Console output
 
-Each incoming packet is printed as formatted JSON. The output includes the tracker IMEI, remote address, timestamp converted to the machine local timezone, GPS coordinates, speed, satellites, priority, and IO element values keyed by Teltonika IO ID.
+Each incoming packet is printed as formatted JSON. The output includes the tracker IMEI, remote address, timestamp converted to the machine local timezone, GPS coordinates, speed, satellites, priority, and IO element values keyed by Teltonika IO ID, ordered numerically by AVL Property ID.
 
 ## Notes
 
