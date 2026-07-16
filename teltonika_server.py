@@ -120,8 +120,15 @@ def parse_io_elements(reader: Reader, codec_id: int) -> dict[str, Any]:
     return {"event_io_id": event_io_id, "total_io": total_io, "values": values}
 
 
+def format_local_timestamp(timestamp_ms: int) -> str:
+    """Return the tracker timestamp using the machine local timezone."""
+    local_timestamp = dt.datetime.fromtimestamp(timestamp_ms / 1000).astimezone()
+    return local_timestamp.isoformat(timespec="seconds")
+
+
 def parse_avl_record(reader: Reader, codec_id: int) -> dict[str, Any]:
     timestamp_ms = reader.u64()
+    timestamp = format_local_timestamp(timestamp_ms)
     priority = reader.u8()
     longitude = reader.i32() / 10_000_000
     latitude = reader.i32() / 10_000_000
@@ -131,7 +138,7 @@ def parse_avl_record(reader: Reader, codec_id: int) -> dict[str, Any]:
     speed = reader.u16()
 
     return {
-        "timestamp": dt.datetime.fromtimestamp(timestamp_ms / 1000, tz=dt.timezone.utc).isoformat(),
+        "timestamp": timestamp,
         "priority": priority,
         "gps": {
             "latitude": latitude,
