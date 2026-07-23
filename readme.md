@@ -8,7 +8,7 @@ The server:
 2. Accepts the Teltonika IMEI handshake and replies with `0x01`.
 3. Decodes received Codec 8 / Codec 8 Extended AVL packets.
 4. Prints decoded JSON to the console.
-5. Acknowledges the tracker with the number of decoded records.
+5. Acknowledges the tracker with the advertised number of records, even when a packet cannot be fully decoded, so simulation/error bursts do not make the sender back off waiting for an ACK.
 
 ## Run
 
@@ -32,4 +32,4 @@ Each incoming packet is printed as formatted JSON. The output includes the track
 
 - The script uses only the Python standard library.
 - It is intended for a simple TCP listener/decoder workflow and does not store data.
-- The acknowledgement is protocol-correct for Teltonika TCP AVL packets: a 4-byte big-endian integer containing the number of records successfully decoded.
+- The acknowledgement is a 4-byte big-endian integer containing the AVL record count advertised by the packet. If decoding fails after the record count is readable, the server still sends that acknowledgement and logs the decode error plus raw packet bytes so simulations continue sending instead of backing off.

@@ -153,6 +153,24 @@ def parse_avl_record(reader: Reader, codec_id: int) -> dict[str, Any]:
     }
 
 
+def declared_record_count(packet: bytes) -> int:
+    """Return the AVL record count advertised by a packet before full decoding."""
+    reader = Reader(packet)
+    preamble = reader.u32()
+    if preamble != 0:
+        raise ProtocolError(f"invalid preamble: 0x{preamble:08x}")
+
+    data_len = reader.u32()
+    if data_len < 2:
+        raise ProtocolError(f"AVL data too short to contain record count: {data_len}")
+    avl_data = reader.take(data_len)
+    reader.take(4)
+    if reader.remaining() != 0:
+        raise ProtocolError(f"unexpected trailing bytes: {reader.remaining()}")
+
+    return avl_data[1]
+
+
 def parse_avl_packet(packet: bytes) -> tuple[int, dict[str, Any]]:
     reader = Reader(packet)
     preamble = reader.u32()
@@ -200,10 +218,23 @@ def handle_client(conn: socket.socket, address: tuple[str, int]) -> None:
                 raise ProtocolError(f"invalid AVL data length: {data_len}")
             body_and_crc = recv_exact(conn, data_len + 4)
             packet = header + body_and_crc
-            record_count, decoded = parse_avl_packet(packet)
-            decoded["imei"] = imei
-            decoded["remote_address"] = f"{address[0]}:{address[1]}"
-            print(json.dumps(decoded, indent=2), flush=True)
+            try:
+                record_count, decoded = parse_avl_packet(packet)
+            except ProtocolError as exc:
+                record_count = declared_record_count(packet)
+                decoded = {
+                    "imei": imei,
+                    "remote_address": f"{address[0]}:{address[1]}",
+                    "record_count": record_count,
+                    "decode_error": str(exc),
+                    "raw_packet_hex": packet.hex(),
+                }
+                print(json.dumps(decoded, indent=2), flush=True)
+            else:
+                decoded["imei"] = imei
+                decoded["remote_address"] = f"{address[0]}:{address[1]}"
+                print(json.dumps(decoded, indent=2), flush=True)
+
             conn.sendall(struct.pack(">I", record_count))
             print(f"acknowledged {record_count} record(s) for {imei}", flush=True)
 
